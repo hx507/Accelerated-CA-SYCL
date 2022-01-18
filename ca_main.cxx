@@ -17,6 +17,9 @@ typedef sycl::buffer<cell, 1> cl_buffer;
 static cell *canvas1 = (cell*)calloc(BUFFER_SIZE, 1), *canvas2 = (cell*)calloc(BUFFER_SIZE, 1);
 cl_buffer buffer1 { canvas1, CANVAS_SIZE_X*CANVAS_SIZE_Y }, buffer2 { canvas2, CANVAS_SIZE_X*CANVAS_SIZE_Y };
 
+cell* host_canvas = (cell*)calloc(BUFFER_SIZE, 1);
+cl_buffer host_buffer { host_canvas, CANVAS_SIZE_X* CANVAS_SIZE_Y };
+
 inline size_t idx(ssize_t X, ssize_t Y)
 {
     if (Y >= 0 && X >= 0 && ((Y * CANVAS_SIZE_X + X) < (long)(NUM_CELLS - 1))) {
@@ -56,25 +59,33 @@ inline void update(cl_buffer origin, cl_buffer dest, sycl::queue cl_queue)
             auto dst_acc = dest.get_access<sycl::access::mode::discard_write>(cgh);
 
             cgh.parallel_for(sycl::range<1>(CANVAS_SIZE_X * CANVAS_SIZE_Y), [=](sycl::id<1> i) {
-                 auto x = xdi_x(i), y = xdi_y(i);
-                 dst_acc[i].x = update_cell_bin_2d(ori_acc[i],
-                 ori_acc[idx(x - 1, y - 1)],
-                 ori_acc[idx(x + 1, y + 1)],
-                 ori_acc[idx(x, y - 1)],
-                 ori_acc[idx(x - 1, y)],
-                 ori_acc[idx(x + 1, y)],
-                 ori_acc[idx(x, y + 1)],
-                 ori_acc[idx(x - 1, y + 1)],
-                 ori_acc[idx(x + 1, y - 1)]);
+                auto x = xdi_x(i), y = xdi_y(i);
+                dst_acc[i].x = update_cell_bin_2d(ori_acc[i],
+                    ori_acc[idx(x - 1, y - 1)],
+                    ori_acc[idx(x + 1, y + 1)],
+                    ori_acc[idx(x, y - 1)],
+                    ori_acc[idx(x - 1, y)],
+                    ori_acc[idx(x + 1, y)],
+                    ori_acc[idx(x, y + 1)],
+                    ori_acc[idx(x - 1, y + 1)],
+                    ori_acc[idx(x + 1, y - 1)]);
             });
         });
     }
 }
 
+inline void buf_copy(cl_buffer src, cl_buffer dst)
+{
+    cl_queue.submit([&](sycl::handler& cgh) {
+        auto src_a = src.get_access<sycl::access::mode::read>(cgh);
+        auto dst_a = dst.get_access<sycl::access::mode::discard_write>(cgh);
+        cgh.copy(src_a, dst_a);
+    });
+}
+
 inline void copy_into_buffer(cell* src, cl_buffer dst_buf)
 {
     auto dst = dst_buf.get_access<sycl::access::mode::discard_write>();
-    // memcpy(dst_acc, src, BUFFER_SIZE);
     for (size_t i = 0; i < CANVAS_SIZE_X * CANVAS_SIZE_Y; i++) {
         dst[i] = src[i];
     }
@@ -82,7 +93,6 @@ inline void copy_into_buffer(cell* src, cl_buffer dst_buf)
 inline void copy_from_buffer(cl_buffer src_buf, cell* dst)
 {
     auto src = src_buf.get_access<sycl::access::mode::read>();
-    // memcpy(dst, src_acc, BUFFER_SIZE);
     for (size_t i = 0; i < CANVAS_SIZE_X * CANVAS_SIZE_Y; i++) {
         dst[i] = src[i];
     }
@@ -112,7 +122,6 @@ int main(int argc, char** argv)
     std::cout << "Running on "
               << cl_queue.get_device().get_info<sycl::info::device::name>() << std::endl;
 
-    cell* host_canvas = (cell*)calloc(BUFFER_SIZE, 1);
     for (int i = CANVAS_SIZE_X * 3 / 7; i < CANVAS_SIZE_X * 4 / 7; i++) {
         host_canvas[idx(i, i)].x = 1;
         host_canvas[idx(i, i + 1)].x = 1;
@@ -124,7 +133,7 @@ int main(int argc, char** argv)
     copy_into_buffer(host_canvas, buffer1);
     print_buffer(buffer1);
 
-    int iteration = 80000;
+    int iteration = 100000;
 #ifdef DO_TERM_DISPLAY
     int delay = 30000;
 #else
@@ -134,12 +143,12 @@ int main(int argc, char** argv)
     debug_print("Display is now ready\n");
     for (int i = 0; i < iteration / 2; i++) {
         update(buffer1, buffer2, cl_queue);
-        // copy_from_buffer(host_canvas, buffer2);
+        // copy_from_buffer(buffer2, host_canvas);
         print_buffer(buffer2);
         usleep(delay);
 
         update(buffer2, buffer1, cl_queue);
-        // copy_from_buffer(host_canvas, buffer1);
+        // copy_from_buffer(buffer2, host_canvas);
         print_buffer(buffer1);
         usleep(delay);
     }
