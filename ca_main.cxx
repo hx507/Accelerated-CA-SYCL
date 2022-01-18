@@ -6,10 +6,18 @@
 #include <string>
 #include <unistd.h>
 
-#include "include/config.h"
+#include <CL/sycl.hpp>
 
-static cell *cuda_buffer1 = NULL, *cuda_buffer2 = NULL;
-cell* host_buffer = NULL;
+#include "config.h"
+
+namespace sycl = cl::sycl;
+sycl::queue cl_queue(sycl::default_selector {});
+class ca_kernel_class;
+
+typedef sycl::buffer<cell, 1> cl_buffer;
+static cell *canvas1 = (cell*)calloc(BUFFER_SIZE, 1), *canvas2 = (cell*)calloc(BUFFER_SIZE, 1);
+cl_buffer buffer1(canvas1, BUFFER_SIZE), buffer2(canvas2, BUFFER_SIZE);
+cell* host_canvas = (cell*)calloc(BUFFER_SIZE, 1);
 
 inline size_t idx(ssize_t X, ssize_t Y)
 {
@@ -19,7 +27,6 @@ inline size_t idx(ssize_t X, ssize_t Y)
         return NUM_CELLS - 1;
     }
 }
-//(((int)Y >= 0 && (int)X >= 0 && ((Y * CANVAS_SIZE_X + X) < NUM_CELLS - 1)) ? (Y * CANVAS_SIZE_X + X) : NUM_CELLS - 1)
 inline size_t xdi_x(size_t i)
 {
     return i % CANVAS_SIZE_X;
@@ -34,19 +41,13 @@ void init()
 {
     debug_print("Using %d dimensional canvas of size %zux%zu with %lu bit colors\n", NDIM, CANVAS_SIZE_X, CANVAS_SIZE_Y, N_COLOR_BIT);
     debug_print("Using two buffer each of size %lu mb, or %lu cells\n", BUFFER_SIZE / 1024 / 1024, BUFFER_SIZE / sizeof(cell));
-
-    cuda_buffer1 = (cell*)calloc(BUFFER_SIZE, 1);
-    cuda_buffer2 = (cell*)calloc(BUFFER_SIZE, 1);
-
-    if (host_buffer) {
-        free(host_buffer);
-        host_buffer = NULL;
-    }
-    host_buffer = (cell*)calloc(1, BUFFER_SIZE);
+    std::cout << "Running on "
+              << cl_queue.get_device().get_info<sycl::info::device::name>()
+              << std::endl;
     debug_print("Initialization done!\n");
 }
 
-inline unsigned int update_cell_bin_2d(cell& center, cell& c1, cell& c2, cell& c3, cell& c4, cell& c5, cell& c6, cell& c7, cell& c8)
+inline unsigned int update_cell_bin_2d(const cell& center, const cell& c1, const cell& c2, const cell& c3, const cell& c4, const cell& c5, const cell& c6, const cell& c7, const cell& c8)
 {
     unsigned int sum = c1.x
         + c2.x
@@ -56,16 +57,31 @@ inline unsigned int update_cell_bin_2d(cell& center, cell& c1, cell& c2, cell& c
         + c6.x
         + c7.x
         + c8.x;
-    if (sum < 2 || sum > 3) {
-        return 0;
-    } else if ((center.x && (sum == 2 || sum == 3)) || ((!center.x) && sum == 3)) {
-        return 1;
-    }
-    return 0;
+    // return (center.x && (sum == 2 || sum == 3)) || ((!center.x) && sum == 3);
+    return (center.x && (sum == 2 || sum == 3)) || ((!center.x) && sum == 3);
 }
 
-inline void update(cell* dest, cell* origin)
+inline void update(cl_buffer origin, cl_buffer dest)
 {
+#ifdef USE_SYCL
+    cl_queue.submit([&](sycl::handler& cgh) {
+        auto ori_acc = origin.get_access<sycl::access::mode::read>(cgh);
+        auto dst_acc = origin.get_access<sycl::access::mode::discard_write>(cgh);
+
+        cgh.parallel_for(sycl::range<1>(BUFFER_SIZE), [=](sycl::id<1> i) {
+            auto x = xdi_x(i), y = xdi_y(i);
+            dst_acc[i].x = update_cell_bin_2d(ori_acc[i],
+                ori_acc[idx(x - 1, y - 1)],
+                ori_acc[idx(x + 1, y + 1)],
+                ori_acc[idx(x, y - 1)],
+                ori_acc[idx(x - 1, y)],
+                ori_acc[idx(x + 1, y)],
+                ori_acc[idx(x, y + 1)],
+                ori_acc[idx(x - 1, y + 1)],
+                ori_acc[idx(x + 1, y - 1)]);
+        });
+    });
+#else
     for (ssize_t x = 0; x < CANVAS_SIZE_X; x++) {
         for (ssize_t y = 0; y < CANVAS_SIZE_Y; y++) {
             size_t i = idx(x, y);
@@ -80,20 +96,30 @@ inline void update(cell* dest, cell* origin)
                 origin[idx(x + 1, y - 1)]);
         }
     }
+#endif
 }
 
-inline void copy_buffer_to_host(cell* dst, cell* src)
+inline void copy_into_buffer(cell* src, cl_buffer dst_buf)
 {
-    memcpy(dst, src, BUFFER_SIZE);
+    auto dst = dst_buf.get_access<sycl::access::mode::discard_write>();
+    // memcpy(dst_acc, src, BUFFER_SIZE);
+    for (size_t i = 0; i < BUFFER_SIZE; i++) {
+        dst[i] = src[i];
+    }
 }
-inline void copy_buffer_to_device(cell* dst, cell* src)
+inline void copy_from_buffer(cl_buffer src_buf, cell* dst)
 {
-    memcpy(dst, src, BUFFER_SIZE);
+    auto src = src_buf.get_access<sycl::access::mode::read>();
+    // memcpy(dst, src_acc, BUFFER_SIZE);
+    for (size_t i = 0; i < BUFFER_SIZE; i++) {
+        dst[i] = src[i];
+    }
 }
 
-inline void print_buffer(cell* src)
+inline void print_buffer(cl_buffer src_buf)
 {
 #ifdef DO_TERM_DISPLAY
+    auto src = src_buf.get_access<sycl::access::mode::read>();
     fprintf(stdout, "---------------------Iteration-------------------------\n");
     for (ssize_t x = 0; x < CANVAS_SIZE_X; x++) {
         for (ssize_t y = 0; y < CANVAS_SIZE_Y; y++) {
@@ -110,15 +136,15 @@ int main(int argc, char** argv)
     debug_print("-------------CA Running-----------\n");
     init();
     for (int i = CANVAS_SIZE_X * 3 / 7; i < CANVAS_SIZE_X * 4 / 7; i++) {
-        host_buffer[idx(i, i)].x = 1;
-        host_buffer[idx(i, i + 1)].x = 1;
-        host_buffer[idx(i, i - 1)].x = 1;
-        host_buffer[idx(i, i - 5)].x = 1;
-        host_buffer[idx(i - 1, i - 6)].x = 1;
-        host_buffer[idx(i, i - 6)].x = 1;
+        host_canvas[idx(i, i)].x = 1;
+        host_canvas[idx(i, i + 1)].x = 1;
+        host_canvas[idx(i, i - 1)].x = 1;
+        host_canvas[idx(i, i - 5)].x = 1;
+        host_canvas[idx(i - 1, i - 6)].x = 1;
+        host_canvas[idx(i, i - 6)].x = 1;
     }
-    print_buffer(host_buffer);
-    copy_buffer_to_device(cuda_buffer1, host_buffer);
+    copy_into_buffer(host_canvas, buffer1);
+    print_buffer(buffer1);
 
     int iteration = 80000;
 #ifdef DO_TERM_DISPLAY
@@ -129,14 +155,14 @@ int main(int argc, char** argv)
 #endif
     debug_print("Display is now ready\n");
     for (int i = 0; i < iteration / 2; i++) {
-        update(cuda_buffer2, cuda_buffer1);
-        copy_buffer_to_host(host_buffer, cuda_buffer2);
-        print_buffer(host_buffer);
+        update(buffer1, buffer2);
+        // copy_from_buffer(host_canvas, buffer2);
+        print_buffer(buffer2);
         usleep(delay);
 
-        update(cuda_buffer1, cuda_buffer2);
-        copy_buffer_to_host(host_buffer, cuda_buffer1);
-        print_buffer(host_buffer);
+        update(buffer2, buffer1);
+        // copy_from_buffer(host_canvas, buffer1);
+        print_buffer(buffer1);
         usleep(delay);
     }
 }
