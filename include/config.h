@@ -18,17 +18,17 @@
 #endif
 #ifndef CANVAS_SIZE_X
 //#define CANVAS_SIZE_X 32L
-//#define CANVAS_SIZE_X 128L
+#define CANVAS_SIZE_X 128L
 //#define CANVAS_SIZE_X 500
-#define CANVAS_SIZE_X 1920L
+//#define CANVAS_SIZE_X 1920L
 //#define CANVAS_SIZE_X ((int)(1919 * 1.5))
 //#define CANVAS_SIZE_X (ssize_t)99551
 #endif
 #ifndef CANVAS_SIZE_Y
 //#define CANVAS_SIZE_Y 32L
-//#define CANVAS_SIZE_Y 128L
+#define CANVAS_SIZE_Y 128L
 //#define CANVAS_SIZE_Y 500
-#define CANVAS_SIZE_Y 1080L
+//#define CANVAS_SIZE_Y 1080L
 //#define CANVAS_SIZE_Y ((int)(1080 * 1.5))
 //#define CANVAS_SIZE_Y (ssize_t)99343
 #endif

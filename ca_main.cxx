@@ -133,7 +133,7 @@ int main(int argc, char** argv)
     copy_into_buffer(host_canvas, buffer1);
     print_buffer(buffer1);
 
-    int iteration = 100000;
+    int iteration = 10000;
 #ifdef DO_TERM_DISPLAY
     int delay = 30000;
 #else
