@@ -63,19 +63,16 @@ inline void update(cell* origin, cell* dest, sycl::queue cl_queue)
             origin[idx(x - 1, y + 1)],
             origin[idx(x + 1, y - 1)]);
     });
-    cl_queue.wait_and_throw();
 }
 
 inline void memCopyHostToDevice(cell* host, cell* device)
 {
     cl_queue.memcpy(device, host, BUFFER_SIZE);
-    cl_queue.wait_and_throw();
 }
 
 inline void memCopyDeviceToHost(cell* device, cell* host)
 {
     cl_queue.memcpy(host, device, BUFFER_SIZE);
-    cl_queue.wait_and_throw();
 }
 
 inline void print_buffer(cell* src)
@@ -122,12 +119,16 @@ int main(int argc, char** argv)
     for (int i = 0; i < iteration / 2; i++) {
         update(canvas1, canvas2, cl_queue);
         memCopyDeviceToHost(canvas2, host_canvas);
-         print_buffer(canvas2);
+        print_buffer(canvas2);
         usleep(delay);
+
+        cl_queue.wait_and_throw();
 
         update(canvas2, canvas1, cl_queue);
         memCopyDeviceToHost(canvas2, host_canvas);
-         print_buffer(canvas1);
+        print_buffer(canvas1);
         usleep(delay);
+
+        cl_queue.wait_and_throw();
     }
 }
