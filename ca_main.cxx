@@ -118,6 +118,7 @@ int main(int argc, char** argv)
 
     for (int i = 0; i < iteration / 2; i++) {
         update(canvas1, canvas2, cl_queue);
+        cl_queue.wait_and_throw();
         memCopyDeviceToHost(canvas2, host_canvas);
         print_buffer(canvas2);
         usleep(delay);
@@ -125,6 +126,7 @@ int main(int argc, char** argv)
         cl_queue.wait_and_throw();
 
         update(canvas2, canvas1, cl_queue);
+        cl_queue.wait_and_throw();
         memCopyDeviceToHost(canvas2, host_canvas);
         print_buffer(canvas1);
         usleep(delay);
